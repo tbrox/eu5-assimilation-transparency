@@ -73,8 +73,39 @@ These are available to GUI scripts and to localization. Return types are listed,
 ### 2.3 Caveat
 I found no vanilla script text for the monthly assimilation update. The existence of the data functions in 1.3 suggests the tick lives in the engine. Treat the explanations in 2.1 as hypotheses until tested against your game files and a save.
 
+## 2b. Round 2: existing mods, player evidence, GUI wiring
+
+### Existing mods and references (read for understanding only; do not copy their code)
+| Project | Why it matters |
+|---|---|
+| [MnT-EU5 (MEIOU and Taxes)](https://github.com/MEIOU-and-Taxes/MnT-EU5) | Total-conversion mod. Its `in_game/gui/location_window.gui` is a modified copy of the vanilla window and shows exactly how the demographics tooltip is wired (section below). Its changelog says vanilla base assimilation/conversion speed is **absolute** (flat) and that it made it **relative** ("400+ years to fully assimilate"). Cabinet "Promote Culture" adds flat `local_pop_assimilation_speed` (vanilla 0.04, MnT 0.016) plus a percentage `..._speed_modifier`. It also zeroes `ASSIMILATION_ACCEPTED/TOLERATED_CULTURE_MODIFIER` and overrides `devastation`, `integration_*` static modifiers with `INJECT:`/`REPLACE:`. |
+| [Community Mod Framework](https://github.com/Europa-Universalis-5-Modding-Co-op/community-mod-framework) | Ships extracted vanilla GUI types (`in_game/gui/vanilla/cmf_location_window_vanilla_types.gui`, ~2900 lines) so mods override only a top-level widget. Also provides mod menu (settings toggles), custom alerts, on_action hooks, mod detection. Good base for a settings toggle and for an alert like "assimilation stalled in X". |
+| [Foreign Pop Types](https://github.com/miraad-g/Foreign-Pop-Types) | Adds pop types (e.g. foreign peasants) with their own `assimilation_conversion_factor`, to stop the game merging them. Shows the pop-type and modifier-definition patterns. |
+| Realistic Conversion and Assimilation, Conversion and Assimilation Overhaul, Tolerated/Accepted Culture Assimilation (Steam Workshop) | Balance mods; they change rates and rules, none was found that adds explanation/tooltips. No existing "assimilation transparency" mod was found in my searches. Compatibility with these should be tested. |
+
+### How the demographics tooltip is built (vanilla, via MnT's copy; version may differ from 1.3.11)
+- Per-culture row in the location window: icon + `Location.GetMonthlyAssimilationChangeForCulture(culture)` as the number, with tooltips from `GetPopsCultureInfo`, `GetMonthlyChangeBreakdownForCulture`, `GetAssimilateInfoForCulture`, `GetAssimilatePrimaryDescriptionForCulture`; a "cannot assimilate" icon appears only when `Location.CanAssimilate` is false, with text `GetCannotAssimilateInfo`; `IsAssimilatingToCulture` shows an "assimilating" icon with `GetAssimilatingCultureInfo`. Religion rows mirror this.
+- **These are all location-level, pre-formatted engine strings.** `Location.CanAssimilate` is a single bool for the whole location.
+- The pop-level checks `Pop.CanPopAssimilate`, `Pop.CanPopAssimilateInfo`, `Pop.CanPopConvert(Info)` and the list `Location.GetTotalPopList` exist in the data types but I found **no use of them in the location window** in MnT's copy. So the game appears to know per-pop why a pop can't assimilate, but the demographics panel doesn't show it. **[inferred; needs confirmation on 1.3.11]**
+- Other useful getters: `Pop.GetType/GetCulture/GetReligion/GetSize/GetCultureStatusIcon`, `Location.GetCultureStatusDescriptionForLocation`, `Location.GetReligionStatusDescriptionForLocation`, `Location.GetMarketAccess(Breakdown)`, `Location.GetControl/GetMaxControl`, `Location.GetAverageLiteracy`, `Location.GetDominantCulture/Religion/Language`, `PopType.IsSlaves/IsTribesmen/IsBurgher/IsClergy`.
+
+### Player evidence (anecdotal, Steam discussions; **not** verified against files)
+These match your symptoms, from [assimilate/convert](https://steamcommunity.com/app/3450310/discussions/0/685238726928918171/), [Assimilation not working?](https://steamcommunity.com/app/3450310/discussions/0/684116375920439710/), [How to assimilate Pops?](https://steamcommunity.com/app/3450310/discussions/0/684115079180042642/):
+- "Islamic pops need to be converted to your religion before they can be assimilated." (same as your Moroccan Muslims observation)
+- The sidebar/tooltip shows e.g. 70-90 pops a month but the location changes by about 1: the rest were slaves (or tribesmen) that can never assimilate, so the tooltip rate is computed over pops that cannot take part.
+- Slaves and tribesmen can't be converted or assimilated (tribesmen first need "Settle the Tribesmen"). Settled-as-peasant fixes it.
+- Burghers sometimes never assimilate (2500 burghers, 47% control, no change), solved by demoting the town to rural. Consistent with the market-language burgher floor (0.01) in the defines.
+- Accepted cultures are said to be immune to assimilation (only tolerated/discriminated assimilate).
+- Buildings and estate privileges can make pops immune while the number still shows (e.g. "shows 60, result 0").
+- Control, societal values (Spiritualist vs Humanist) and Cultural Tradition vs Influence ("your culture numbers") scale the result.
+
+### What these findings change
+- The strongest working theory for your case is now: **the tooltip's per-month figure is a location-wide rate that does not exclude ineligible pops, and religion is an eligibility gate for culture assimilation** (Muslim pops under a Catholic ruler are skipped until converted). This explains both "numbers don't add up" and "converting first fixes it".
+- This is still a theory. It becomes testable without game files: hover the pop rows in the location **Pops** list, which uses `Pop.CanPopAssimilateInfo` in some windows, and compare per-pop reasons.
+
 ## 3. Plan
 
+0. **Feasibility already shown:** a GUI-only mod can add a per-pop eligibility table (type, culture, religion, size, `CanPopAssimilate`, `CanPopAssimilateInfo`, `CanPopConvert`) to the location window, plus a corrected "eligible pops" summary. GUI `type`/`template` definitions can be overridden individually (last loaded mod wins), single localization keys can be replaced via a `localization/<lang>/replace/` folder, and defines can be changed one at a time ([Mod compatibility](https://eu5.paradoxwikis.com/Mod_compatibility)).
 1. **Ground truth (needs your game install).** From `Europa Universalis V/game/` copy `in_game/gui` (demographics and location views), `in_game/common/pop_types`, `in_game/common/cabinet_actions/assimilate_area.txt`, `in_game/common/defines` and the matching localization. Grep for `GetAssimilateInfo`, `GetCannotAssimilateInfo`, `GetMonthlyAssimilationChangeForCulture`, `assimilation` and `conversion`.
 2. **Reproduce.** In `-debug_mode`, take a Castile save with Moroccan Muslims. Record the tooltip numbers, then the pop deltas over several months, per class. Repeat after converting the religion. Check `error.log`.
 3. **Build v0.1 (transparency only).** New mod `eu5_assimilation_transparency` with `.metadata/metadata.json`, new GUI additions and localization, using `INJECT`-style or new files rather than whole-file replacement where the GUI allows it, to limit conflicts with other mods such as Realistic Conversion and Assimilation.
